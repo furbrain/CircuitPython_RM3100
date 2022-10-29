@@ -6,3 +6,4 @@
 
 .. automodule:: rm3100
     :members:
+    :inherited-members:
