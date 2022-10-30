@@ -91,7 +91,8 @@ Usage Examples
 ==============
 
 .. code-block:: python
-    :caption: I2C, single readings
+
+    # Example using I2C and single measurement readings, no DRDY pin
 
     import time
     import board
@@ -106,7 +107,7 @@ Usage Examples
         print(rm.get_next_reading())
 
 .. code-block:: python
-    :caption: SPI, continuous mode
+    # Example using SPI and a DRDY pin, using continuous readings
 
     import board
     import digitalio
