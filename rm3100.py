@@ -24,6 +24,7 @@ Implementation Notes
   https://circuitpython.org/downloads
 
 * Adafruit's Bus Device library: https://github.com/adafruit/Adafruit_CircuitPython_BusDevice
+
 """
 
 __version__ = "0.0.0+auto.0"
@@ -54,6 +55,7 @@ _TMRC = const(0x0B)  # timer
 _MX = const(0x24)  # measurements
 _STATUS = const(0x34)
 _CYCLE_DURATION = 0.000036
+_LN2 = 0.693147  # log(2)
 
 
 class _RM3100:
@@ -62,9 +64,9 @@ class _RM3100:
     This is an abstract parent class, please use RM3100_I2C or RM3100_SPI
     """
 
-    def __init__(self, cycle_count: int = 200, int_pin: Optional[Pin] = None):
+    def __init__(self, cycle_count: int = 200, drdy_pin: Optional[Pin] = None):
         self.cycle_count = cycle_count
-        self.int_pin = int_pin
+        self.drdy_pin = drdy_pin
         # set cycle count
         values = struct.pack(
             ">HHH", self.cycle_count, self.cycle_count, self.cycle_count
@@ -72,20 +74,23 @@ class _RM3100:
         self._write_reg(_CCX, values)
         self.continuous = False
 
-    def wait_for_fresh_reading(self):
+    def measurement_complete(self) -> bool:
         """
-        Wait until there is a new reading available.
+        Checks whether the most recent reading has finished.
+
+        :return: True if there is a new reading to get
+        :rtype: bool
         """
-        if self.int_pin is not None:
-            while self.int_pin.value == Pin.LOW:
-                time.sleep(0.01)
-        else:
-            while not self._read_reg(_STATUS):
-                pass
+        if self.drdy_pin is not None:
+            return self.drdy_pin.value
+        # no DRDY pin, so poll the status register
+        status = self._read_reg(_STATUS)
+        return status & 0x80 != 0
 
     def get_last_reading(self) -> Tuple[int, int, int]:
         """
         Get the most recent reading
+
         :return: Magnetic field strength of X,Y,Z axes
         :rtype: (int, int, int)
         """
@@ -93,18 +98,21 @@ class _RM3100:
         results = [int.from_bytes(results[x : x + 3], "big") for x in range(0, 9, 3)]
         return tuple(x - 0x01000000 if x > 0x00800000 else x for x in results)
 
-    def get_single_reading(self) -> Tuple[int, int, int]:
+    def start_single_reading(self):
         """
-        Get a single reading from the RM3100
-
-        :return: Magnetic field strength of X,Y,Z axes
-        :rtype: (int, int, int)
+        Start a single measurement cycle
         """
         # start read
         self._write_reg(_POLL, bytearray([0x70]))
-        time.sleep(_CYCLE_DURATION * self.cycle_count)
-        self.wait_for_fresh_reading()
-        return self.get_last_reading()
+
+    def get_measurement_time(self) -> float:
+        """
+        Get the time needed to complete a measurement
+
+        :return: Measurement time in seconds
+        :rtype: float
+        """
+        return _CYCLE_DURATION * self.cycle_count
 
     # async def aio_get_single_reading(self) -> Tuple[int]:
     #     self._write_reg(_POLL, bytearray([0x70]))
@@ -113,30 +121,40 @@ class _RM3100:
 
     def start_continuous_reading(self, frequency: float = 300):
         """
-        Start continuously reading at the given frequency.
+        Start continuously reading at the given frequency. It is recommended that you use the DRDY
+        line to detect measurement occurrences. Polling for new readings frequently can cause
+        electronic noise that adversely affects accuracy.
+
         :param frequency: Valid frequencies are 600Hz, 300Hz, 150Hz, 75Hz, 37Hz, 18Hz,
-        9Hz, 4.5Hz, 2.3Hz, 1.2Hz, 0.6Hz, 0.3Hz, 0.015Hz. 0.0075Hz.
-        The nearest valid frequency is selected. Note that the cycle count may override this value.
+            9Hz, 4.5Hz, 2.3Hz, 1.2Hz, 0.6Hz, 0.3Hz, 0.015Hz. 0.0075Hz.
+            The nearest valid frequency is selected. Note that the cycle count may override
+            this value, if taking a reading would be longer than the sample interval.
+
         """
         # write frequency
-        exponent = round(math.log2(600 / frequency))
+        exponent = round(math.log(600 / frequency) / _LN2)
         exponent = min(13, exponent)
+        print(exponent)
         value = 0x92 + int(exponent)
         self._write_reg(_TMRC, bytearray([value]))
         # start continuous reading, using all three axes
-        self._write_reg(_CMM, bytearray([0x71]))
+        self._write_reg(_CMM, bytearray([0x79]))
         self.continuous = True
 
-    def get_next_reading(self) -> Tuple[int, int, int]:
+    def get_next_reading(self, poll_interval=0.01) -> Tuple[int, int, int]:
         """
-        Get the next reading when in continuous mode. Raises ValueError if not in continuous mode
+        Get the next reading, can hang forever if not in continuous mode and
+        start_single_reading has not been called. Can cause increased signal noise if the
+        DRDY pin is not used.
+
+        :param float poll_interval: How frequently to check if next reading is ready,
+            default is 0.01s
 
         :return: Magnetic field strength of X,Y,Z axes
         :rtype: (int, int, int)
         """
-        if not self.continuous:
-            raise ValueError("RM3100 not in continuous mode")
-        self.wait_for_fresh_reading()
+        while not self.measurement_complete():
+            time.sleep(poll_interval)
         return self.get_last_reading()
 
     def stop(self):
@@ -166,7 +184,7 @@ class RM3100_I2C(_RM3100):
     :param int cycle_count: Number of oscillations used to measure magnetic field.
         Higher numbers give more accurate results, but takes longer to measure.
         Each cycle takes approximately 36 microseconds. Default is 200.
-    :param ~digitalio.DigitalInOut int_pin: Pin connected to DRDY of RM3100. DRDY signals when
+    :param ~digitalio.DigitalInOut drdy_pin: Pin connected to DRDY of RM3100. DRDY signals when
         the RM3100 has completed a measurement. If `None`, the STATUS register will be polled
         to see when measurement is complete. Default is `None`
     """
@@ -176,10 +194,10 @@ class RM3100_I2C(_RM3100):
         bus: I2C,
         i2c_address: int = 0x20,
         cycle_count: int = 200,
-        int_pin: Optional[Pin] = None,
+        drdy_pin: Optional[Pin] = None,
     ):
         self.device: I2CDevice = I2CDevice(bus, i2c_address)
-        super().__init__(cycle_count, int_pin)
+        super().__init__(cycle_count, drdy_pin)
 
     def _write_reg(self, addr: int, data: bytes):
         data = bytes([addr]) + data
@@ -201,8 +219,8 @@ class RM3100_SPI(_RM3100):
     :param ~digitalio.DigitalInOut chip_select: Chip Select
     :param int cycle_count: Number of oscillations used to measure magnetic field.
         Higher numbers give more accurate results, but takes longer to measure.
-        Each cycle takes approximately 36 microseconds. Default is 200.
-    :param ~digitalio.DigitalInOut int_pin: Pin connected to DRDY of RM3100.
+        Each cycle takes approximately 36 microseconds for 3 axes. Default is 200.
+    :param ~digitalio.DigitalInOut drdy_pin: Pin connected to DRDY of RM3100.
         DRDY signals when the RM3100 has completed a measurement. If `None`, the STATUS
         register will be polled to see when measurement is complete. Default is `None`
     """
@@ -212,10 +230,10 @@ class RM3100_SPI(_RM3100):
         bus: SPI,
         chip_select: digitalio.DigitalInOut,
         cycle_count: int = 200,
-        int_pin: Optional[digitalio.DigitalInOut] = None,
+        drdy_pin: Optional[digitalio.DigitalInOut] = None,
     ):
         self.device = SPIDevice(bus, chip_select)
-        super().__init__(cycle_count, int_pin)
+        super().__init__(cycle_count, drdy_pin)
 
     def _write_reg(self, addr: int, data: bytes):
         data = bytes([addr]) + data
