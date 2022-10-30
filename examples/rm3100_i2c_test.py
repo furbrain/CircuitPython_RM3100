@@ -3,7 +3,6 @@
 #
 # SPDX-License-Identifier: Unlicense
 import time
-
 import board
 import rm3100
 

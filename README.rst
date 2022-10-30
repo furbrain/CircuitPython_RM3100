@@ -87,11 +87,13 @@ Or the following command to update an existing version:
 
     circup update
 
-Usage Example
-=============
+Usage Examples
+==============
 
 .. code-block:: python
+    :caption: I2C, single readings
 
+    import time
     import board
     import rm3100
 
@@ -99,7 +101,32 @@ Usage Example
     rm = rm3100.RM3100_I2C(i2c, i2c_address=0x23)
 
     while True:
-        print(rm.get_single_reading())
+        rm.start_single_reading()
+        time.sleep(rm.get_measurement_time())
+        print(rm.get_next_reading())
+
+.. code-block:: python
+    :caption: SPI, continuous mode
+
+    import board
+    import digitalio
+    import rm3100
+
+    spi = board.SPI()
+    drdy_pin = digitalio.DigitalInOut(board.D3)
+    drdy_pin.direction = digitalio.Direction.INPUT
+
+    cs_pin = digitalio.DigitalInOut(board.D4)
+    cs_pin.direction = digitalio.Direction.OUTPUT
+    cs_pin.value = True
+    rm = rm3100.RM3100_SPI(spi, chip_select=cs_pin, drdy_pin=drdy_pin)
+
+
+    rm.start_continuous_reading(1.2)  # start continuous reading at 1.2Hz
+    for i in range(20):
+        print(rm.get_next_reading())
+    rm.stop()
+
 
 Documentation
 =============
