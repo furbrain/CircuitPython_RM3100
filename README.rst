@@ -107,6 +107,7 @@ Usage Examples
         print(rm.get_next_reading())
 
 .. code-block:: python
+
     # Example using SPI and a DRDY pin, using continuous readings
 
     import board
