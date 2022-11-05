@@ -90,7 +90,7 @@ class _RM3100:
         """
         Get the most recent reading
 
-        :return: Magnetic field strength of X,Y,Z axes
+        :return: Raw magnetic field strength of X,Y,Z axes
         :rtype: (int, int, int)
         """
         results = self._read_multiple(_MX, 9)
@@ -142,7 +142,7 @@ class _RM3100:
         :param float poll_interval: How frequently to check if next reading is ready,
             default is 0.01s
 
-        :return: Magnetic field strength of X,Y,Z axes
+        :return: Raw magnetic field strength of X,Y,Z axes
         :rtype: (int, int, int)
         """
         while not self.measurement_complete:
