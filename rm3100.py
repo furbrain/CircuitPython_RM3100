@@ -111,11 +111,6 @@ class _RM3100:
         """
         return _CYCLE_DURATION * self.cycle_count
 
-    # async def aio_get_single_reading(self) -> Tuple[int]:
-    #     self._write_reg(_POLL, bytearray([0x70]))
-    #     time.sleep(_CYCLE_DURATION * self.cycle_count)
-    #     return self._get_reading()
-
     def start_continuous_reading(self, frequency: float = 300):
         """
         Start continuously reading at the given frequency. It is recommended that you use the DRDY
