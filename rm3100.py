@@ -56,6 +56,7 @@ _MX = const(0x24)  # measurements
 _STATUS = const(0x34)
 _CYCLE_DURATION = 0.000036
 _LN2 = 0.693147  # log(2)
+_UT_PER_CYCLE = 2.5000  # µT per lsb per cycle
 
 
 class _RM3100:
@@ -74,12 +75,10 @@ class _RM3100:
         self._write_reg(_CCX, values)
         self.continuous = False
 
+    @property
     def measurement_complete(self) -> bool:
         """
-        Checks whether the most recent reading has finished.
-
-        :return: True if there is a new reading to get
-        :rtype: bool
+        Whether the most recent reading has finished.
         """
         if self.drdy_pin is not None:
             return self.drdy_pin.value
@@ -105,12 +104,10 @@ class _RM3100:
         # start read
         self._write_reg(_POLL, bytearray([0x70]))
 
-    def get_measurement_time(self) -> float:
+    @property
+    def measurement_time(self) -> float:
         """
-        Get the time needed to complete a measurement
-
-        :return: Measurement time in seconds
-        :rtype: float
+        Time needed to complete a measurement, in seconds
         """
         return _CYCLE_DURATION * self.cycle_count
 
@@ -153,7 +150,7 @@ class _RM3100:
         :return: Magnetic field strength of X,Y,Z axes
         :rtype: (int, int, int)
         """
-        while not self.measurement_complete():
+        while not self.measurement_complete:
             time.sleep(poll_interval)
         return self.get_last_reading()
 
@@ -164,6 +161,30 @@ class _RM3100:
         self._write_reg(_CMM, bytearray([0x70]))
         self.continuous = False
 
+    def convert_to_microteslas(
+        self, value: Tuple[int, int, int]
+    ) -> Tuple[float, float, float]:
+        """
+        Convert raw reading to reading in µT. This is dependent on the cycle
+        count selected.
+        :param (int, int, int) value: raw reading
+        :return: Reading in µT
+        :rtype: (float,float,float)
+        """
+        factor = _UT_PER_CYCLE / self.cycle_count
+        return tuple(x * factor for x in value)
+
+    @property
+    def magnetic(self) -> Tuple[float, float, float]:
+        """
+        Magnetic field strength in x,y,z axes, in µT, uses most recent reading
+        """
+        if not self.continuous:
+            self.start_single_reading()
+            time.sleep(self.measurement_time)
+        values = self.get_next_reading()
+        return self.convert_to_microteslas(values)
+
     def _write_reg(self, addr: int, data: bytes):
         raise NotImplementedError
 
@@ -173,6 +194,13 @@ class _RM3100:
     def _read_reg(self, addr: int) -> int:
         result = self._read_multiple(addr, 1)
         return result[0]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.continuous:
+            self.stop()
 
 
 class RM3100_I2C(_RM3100):
